@@ -254,16 +254,6 @@ class FullInstall:
 
     def _install_mods(self) -> None:
         mods = read_mod_maker(self._grok_mod_dir / 'G.A.M.M.A' / 'modpack_data')
-
-        # Defer first two ModDB downloads (largest files) to end for faster iteration
-        deferred, remaining = [], []
-        for mod in mods:
-            if 'moddb.com' in mod.info.url and len(deferred) < 2:
-                deferred.append(mod)
-            else:
-                remaining.append(mod)
-        mods = remaining + deferred
-
         mods_len = len(mods)
         for i, mod in enumerate(mods):
             print(f'[+] Processing mod {mod.info.title or mod.info.name} ({i}/{mods_len})')
