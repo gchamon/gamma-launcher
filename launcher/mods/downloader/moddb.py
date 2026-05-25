@@ -23,6 +23,7 @@ _browser_processes = []
 _browser_services_started = False
 _browser_download_succeeded = False
 _browser_prompt_url = 'http://localhost:6080/vnc.html?autoconnect=1'
+_browser_download_temp_suffixes = ('.part', '.crdownload')
 
 
 class ModDBDownloader(DefaultDownloader):
@@ -202,7 +203,7 @@ class ModDBDownloader(DefaultDownloader):
         if expected_name and candidate.name != expected_name:
             return None
 
-        if not candidate.is_file() or candidate.name.endswith(('.part', '.crdownload')):
+        if not candidate.is_file() or candidate.name.endswith(_browser_download_temp_suffixes):
             return None
 
         if ModDBDownloader._download_part_exists(candidate):
@@ -232,10 +233,12 @@ class ModDBDownloader(DefaultDownloader):
         shutil.move(str(candidate), str(target))
         return target
 
-    def _get_cached_browser_archive(self, to: Path) -> Path:
+    def _get_cached_browser_archive(self, to: Path) -> Path | None:
         dl_dir = self._browser_download_dir(to)
-        archives = [i for i in dl_dir.iterdir() if i.is_file() and not i.name.endswith(('.crdownload', '.part'))] \
-            if dl_dir.is_dir() else []
+        archives = [
+            i for i in dl_dir.iterdir()
+            if i.is_file() and not i.name.endswith(_browser_download_temp_suffixes)
+        ] if dl_dir.is_dir() else []
 
         if not archives:
             return None
@@ -352,7 +355,7 @@ class ModDBDownloader(DefaultDownloader):
 
         candidates = [
             f for f in dl_dir.iterdir()
-            if f.is_file() and not f.name.endswith(('.part', '.crdownload'))
+            if f.is_file() and not f.name.endswith(_browser_download_temp_suffixes)
         ]
         for candidate in candidates:
             accepted = ModDBDownloader._accept_browser_candidate(
@@ -425,10 +428,9 @@ class ModDBDownloader(DefaultDownloader):
                 profile_dir, dl_dir, since_us, expected_name, expected_hash,
                 stable_sizes, rejected
             )
-            if detected:
-                if not logged_dest:
-                    print('[*] Download detected in Firefox history — waiting for Firefox to finish...')
-                    logged_dest = True
+            if detected and not logged_dest:
+                print('[*] Download detected in Firefox history — waiting for Firefox to finish...')
+                logged_dest = True
             if accepted:
                 print(f'[+] Download complete: {accepted.name}')
                 return accepted

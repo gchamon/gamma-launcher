@@ -7,23 +7,24 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
         build-essential \
+        ca-certificates \
         curl \
         fluxbox \
         git \
         libunrar-dev \
-        p7zip-full \
         novnc \
+        p7zip-full \
         python3 \
         websockify \
-        wget \
         x11vnc \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Unmodified Firefox from Mozilla — cached unless this RUN changes
-RUN wget -q "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US" -O /tmp/firefox.tar \
+RUN curl --fail --location --proto '=https' --proto-redir '=https' \
+        "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US" \
+        --output /tmp/firefox.tar \
     && tar -xf /tmp/firefox.tar -C /opt/ \
     && rm /tmp/firefox.tar
 
@@ -40,7 +41,8 @@ RUN uv venv /opt/gamma-launcher-venv \
     && python -m playwright install-deps firefox
 
 # Layer 3: Launcher code (only this reruns on code changes)
-COPY . /opt/gamma-launcher
+COPY README.md LICENSE /opt/gamma-launcher/
+COPY launcher/ /opt/gamma-launcher/launcher/
 RUN uv pip install --no-cache --no-deps --reinstall /opt/gamma-launcher
 
 ENTRYPOINT ["gamma-launcher"]
