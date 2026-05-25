@@ -1,7 +1,10 @@
 from pathlib import Path
+import json
+import sqlite3
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from launcher.mods.downloader.moddb import ModDBDownloader
 
@@ -9,6 +12,11 @@ from common import basic_url2, mocked_get, moddb_start_url, moddb_page_info, mod
 
 
 class ModDBDownloaderTestCase(TestCase):
+
+    @staticmethod
+    def _write_zip(path: Path, content: str = 'TEST') -> None:
+        with ZipFile(path, 'w') as archive:
+            archive.writestr('test.txt', content)
 
     @patch('launcher.mods.downloader.moddb.g_session.get', side_effect=mocked_get)
     def test_get_download_url(self, mock_request) -> None:
@@ -51,11 +59,153 @@ class ModDBDownloaderTestCase(TestCase):
 
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
             pdir = Path(dir)
-            archive = pdir / 'moddb' / '277404' / 'manual.7z'
+            archive = pdir / 'moddb' / '277404' / 'manual.zip'
             archive.parent.mkdir(parents=True)
-            archive.write_text('TEST')
+            self._write_zip(archive)
 
             self.assertEqual(o._get_cached_browser_archive(pdir), archive)
+
+    def test_cached_browser_archive_ignores_unexpected_filename(self) -> None:
+        o = ModDBDownloader(moddb_start_url, '')
+        o._user_wanted_name = 'expected.zip'
+
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            wrong = pdir / 'moddb' / '277404' / 'wrong.zip'
+            wrong.parent.mkdir(parents=True)
+            self._write_zip(wrong)
+
+            self.assertIsNone(o._get_cached_browser_archive(pdir))
+
+    def test_cached_browser_archive_rejects_html_saved_as_zip(self) -> None:
+        o = ModDBDownloader(moddb_start_url, '')
+        o._user_wanted_name = 'expected.zip'
+
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            archive = pdir / 'moddb' / '277404' / 'expected.zip'
+            archive.parent.mkdir(parents=True)
+            archive.write_text('<!DOCTYPE html><title>Opps - ModDB</title>')
+
+            self.assertIsNone(o._get_cached_browser_archive(pdir))
+            self.assertFalse(archive.exists())
+            self.assertEqual(len(list(archive.parent.glob('expected.zip.invalid-*'))), 1)
+
+    def test_browser_candidate_waits_for_stable_size(self) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            archive = pdir / 'expected.zip'
+            self._write_zip(archive)
+            sizes = {}
+
+            self.assertIsNone(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip', stable_sizes=sizes
+            ))
+            self.assertEqual(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip', stable_sizes=sizes
+            ), archive)
+
+    def test_browser_candidate_waits_while_part_exists(self) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            archive = pdir / 'expected.zip'
+            part = pdir / 'expected.zip.part'
+            self._write_zip(archive)
+            part.write_text('partial')
+            sizes = {str(archive): archive.stat().st_size}
+
+            self.assertIsNone(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip', stable_sizes=sizes
+            ))
+
+            part.unlink()
+            self.assertEqual(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip', stable_sizes=sizes
+            ), archive)
+
+    def test_browser_candidate_rejects_wrong_filename(self) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            archive = pdir / 'wrong.zip'
+            self._write_zip(archive)
+            sizes = {str(archive): archive.stat().st_size}
+
+            self.assertIsNone(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip', stable_sizes=sizes
+            ))
+
+    def test_places_download_info_filters_expected_filename(self) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            profile = Path(dir)
+            db = profile / 'places.sqlite'
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute('CREATE TABLE moz_anno_attributes (id INTEGER, name TEXT)')
+                conn.execute(
+                    'CREATE TABLE moz_annos '
+                    '(place_id INTEGER, anno_attribute_id INTEGER, content TEXT, lastModified INTEGER)'
+                )
+                conn.execute(
+                    'INSERT INTO moz_anno_attributes VALUES (1, "downloads/destinationFileURI")'
+                )
+                conn.execute(
+                    'INSERT INTO moz_anno_attributes VALUES (2, "downloads/metaData")'
+                )
+                conn.execute(
+                    'INSERT INTO moz_annos VALUES (1, 1, ?, 2000)',
+                    ('file:///tmp/wrong.zip',)
+                )
+                conn.execute(
+                    'INSERT INTO moz_annos VALUES (1, 2, ?, 2000)',
+                    (json.dumps({'state': 1}),)
+                )
+                conn.execute(
+                    'INSERT INTO moz_annos VALUES (2, 1, ?, 3000)',
+                    ('file:///tmp/expected.zip',)
+                )
+                conn.execute(
+                    'INSERT INTO moz_annos VALUES (2, 2, ?, 3000)',
+                    (json.dumps({'state': 1}),)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                ModDBDownloader._get_download_info_from_places(
+                    profile, since_us=1000, expected_name='expected.zip'
+                ),
+                (Path('/tmp/expected.zip'), True)
+            )
+
+    @patch('launcher.mods.downloader.moddb.sleep')
+    def test_wait_for_download_rejects_invalid_then_accepts_valid_file(self, mock_sleep) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
+            html = dl_dir / 'expected.zip'
+            html.write_text('<html><title>Opps - ModDB</title>')
+
+            def after_first_sleep(_seconds):
+                if not any(dl_dir.glob('expected.zip.invalid-*')):
+                    return
+                valid = dl_dir / 'expected.zip'
+                if not valid.exists():
+                    self._write_zip(valid)
+
+            mock_sleep.side_effect = after_first_sleep
+
+            self.assertEqual(
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=4,
+                    expected_name='expected.zip',
+                ),
+                dl_dir / 'expected.zip'
+            )
+            self.assertEqual(len(list(dl_dir.glob('expected.zip.invalid-*'))), 1)
 
     @patch('launcher.mods.downloader.moddb.ModDBDownloader._download_with_browser')
     @patch('launcher.mods.downloader.moddb.g_session.get')

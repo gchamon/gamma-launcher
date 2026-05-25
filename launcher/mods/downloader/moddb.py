@@ -3,6 +3,7 @@ import re
 import shutil
 import sqlite3
 import time
+import zipfile
 
 from bs4 import BeautifulSoup
 from os import environ
@@ -14,6 +15,7 @@ from typing import Dict
 from urllib.parse import urlparse, unquote
 
 from launcher.exceptions import HashError, ModDBDownloadError
+from launcher.hash import check_hash
 from launcher.mods.downloader.base import DefaultDownloader, g_session
 
 
@@ -119,10 +121,117 @@ class ModDBDownloader(DefaultDownloader):
     def _browser_download_dir(self, to: Path) -> Path:
         return to / 'moddb' / self.moddb_id
 
+    @staticmethod
+    def _quarantine_browser_download(path: Path, reason: str) -> None:
+        invalid = path.with_name(f'{path.name}.invalid-{int(time.time())}')
+        print(f'[!] Ignoring browser download {path.name}: {reason}')
+        try:
+            path.rename(invalid)
+            print(f'[*] Moved rejected download to {invalid}')
+        except OSError as e:
+            print(f'[!] Could not move rejected download {path}: {e}')
+
+    @staticmethod
+    def _browser_archive_rejection_reason(
+        archive: Path, expected_hash: str = None
+    ) -> str | None:
+        if not archive.is_file():
+            return f'file does not exist: {archive}'
+
+        try:
+            head = archive.read_bytes()[:512]
+        except OSError as e:
+            return f'could not read file: {e}'
+
+        stripped = head.lstrip().lower()
+        if stripped.startswith((b'<!doctype html', b'<html')):
+            return 'download is an HTML page, not an archive'
+
+        suffix = archive.suffix.lower()
+        if suffix == '.zip' and not zipfile.is_zipfile(archive):
+            return 'download is not a valid ZIP archive'
+        if suffix == '.7z' and not head.startswith(b'7z\xbc\xaf\x27\x1c'):
+            return 'download is not a valid 7z archive'
+        if suffix == '.rar' and not head.startswith((b'Rar!\x1a\x07\x00', b'Rar!\x1a\x07\x01\x00')):
+            return 'download is not a valid RAR archive'
+
+        if expected_hash and not check_hash(archive, expected_hash):
+            return 'download hash does not match ModDB metadata'
+
+        return None
+
+    @staticmethod
+    def _download_part_exists(path: Path) -> bool:
+        return any((
+            path.with_name(f'{path.name}.part').exists(),
+            path.with_suffix(f'{path.suffix}.part').exists(),
+            (path.parent / f'{path.name}.part').exists(),
+        ))
+
+    @staticmethod
+    def _accept_browser_candidate(
+        candidate: Path,
+        dl_dir: Path,
+        expected_name: str = None,
+        expected_hash: str = None,
+        stable_sizes: dict[str, int] = None,
+        rejected: set[str] = None,
+    ) -> Path | None:
+        if expected_name and candidate.name != expected_name:
+            return None
+
+        if not candidate.is_file() or candidate.name.endswith(('.part', '.crdownload')):
+            return None
+
+        if ModDBDownloader._download_part_exists(candidate):
+            return None
+
+        try:
+            size = candidate.stat().st_size
+        except OSError:
+            return None
+
+        key = str(candidate)
+        if stable_sizes is not None and stable_sizes.get(key) != size:
+            stable_sizes[key] = size
+            return None
+
+        reason = ModDBDownloader._browser_archive_rejection_reason(candidate, expected_hash)
+        if reason:
+            if rejected is None or key not in rejected:
+                ModDBDownloader._quarantine_browser_download(candidate, reason)
+                if rejected is not None:
+                    rejected.add(key)
+            return None
+
+        if candidate.parent == dl_dir:
+            return candidate
+
+        target = dl_dir / candidate.name
+        shutil.move(str(candidate), str(target))
+        return target
+
     def _get_cached_browser_archive(self, to: Path) -> Path:
         dl_dir = self._browser_download_dir(to)
         archives = [i for i in dl_dir.iterdir() if i.is_file() and not i.name.endswith(('.crdownload', '.part'))] \
             if dl_dir.is_dir() else []
+
+        if not archives:
+            return None
+
+        if self._user_wanted_name:
+            for archive in [i for i in archives if i.name != self._user_wanted_name]:
+                print(
+                    f'[*] Ignoring cached browser download {archive.name}; '
+                    f'waiting for {self._user_wanted_name}'
+                )
+            archives = [i for i in archives if i.name == self._user_wanted_name]
+
+        for archive in archives.copy():
+            reason = self._browser_archive_rejection_reason(archive, self._archivehash)
+            if reason:
+                self._quarantine_browser_download(archive, reason)
+                archives.remove(archive)
 
         if not archives:
             return None
@@ -156,7 +265,7 @@ class ModDBDownloader(DefaultDownloader):
 
     @staticmethod
     def _get_download_info_from_places(
-        profile_dir: Path, since_us: int, debug: bool = False
+        profile_dir: Path, since_us: int, expected_name: str = None, debug: bool = False
     ) -> tuple[Path, bool] | None:
         db = profile_dir / 'places.sqlite'
         wal = profile_dir / 'places.sqlite-wal'
@@ -195,7 +304,7 @@ class ModDBDownloader(DefaultDownloader):
                     ).fetchone()[0]
                     print(f'[*] places.sqlite annotation attributes: {names}')
                     print(f'[*] WAL={wal_size}B SHM={shm_size}B total download rows={total}')
-                row = conn.execute(
+                rows = conn.execute(
                     "SELECT d.content,"
                     " (SELECT m.content FROM moz_annos m"
                     "  JOIN moz_anno_attributes ma ON m.anno_attribute_id = ma.id"
@@ -205,11 +314,13 @@ class ModDBDownloader(DefaultDownloader):
                     " JOIN moz_anno_attributes da ON d.anno_attribute_id = da.id"
                     " WHERE da.name = 'downloads/destinationFileURI'"
                     "   AND d.lastModified >= ?"
-                    " ORDER BY d.lastModified DESC LIMIT 1",
+                    " ORDER BY d.lastModified DESC",
                     (since_us,)
-                ).fetchone()
-                if row:
+                ).fetchall()
+                for row in rows:
                     dest = Path(unquote(urlparse(row[0]).path))
+                    if expected_name and dest.name != expected_name:
+                        continue
                     meta = json.loads(row[1]) if row[1] else {}
                     return dest, meta.get('state') == 1
             finally:
@@ -221,20 +332,30 @@ class ModDBDownloader(DefaultDownloader):
         return None
 
     @staticmethod
-    def _wait_for_download(profile_dir: Path, dl_dir: Path, since_us: int, timeout: int = 600) -> Path:
+    def _wait_for_download(
+        profile_dir: Path, dl_dir: Path, since_us: int, timeout: int = 600,
+        expected_name: str = None, expected_hash: str = None
+    ) -> Path:
         logged_dest = False
         schema_dumped = False
+        stable_sizes = {}
+        rejected = set()
 
         for tick in range(timeout):
             # Fast path: prefs redirected the download into dl_dir
             if dl_dir.is_dir():
-                files = [
+                candidates = [
                     f for f in dl_dir.iterdir()
                     if f.is_file() and not f.name.endswith(('.part', '.crdownload'))
                 ]
-                if files:
-                    sleep(1)
-                    return files[0]
+                for candidate in candidates:
+                    accepted = ModDBDownloader._accept_browser_candidate(
+                        candidate, dl_dir, expected_name, expected_hash,
+                        stable_sizes, rejected
+                    )
+                    if accepted:
+                        print(f'[+] Download complete: {accepted.name}')
+                        return accepted
 
             db = profile_dir / 'places.sqlite'
             if not logged_dest and tick % 15 == 0:
@@ -245,20 +366,22 @@ class ModDBDownloader(DefaultDownloader):
             if debug:
                 schema_dumped = True
 
-            info = ModDBDownloader._get_download_info_from_places(profile_dir, since_us, debug=debug)
+            info = ModDBDownloader._get_download_info_from_places(
+                profile_dir, since_us, expected_name, debug=debug
+            )
             if info is not None:
                 dest, is_complete = info
                 if not logged_dest:
                     print(f'[*] Download detected: {dest} — waiting for Firefox to finish...')
                     logged_dest = True
                 if is_complete:
-                    print(f'[+] Download complete: {dest.name}')
-                    sleep(1)
-                    if dest.parent == dl_dir:
-                        return dest
-                    target = dl_dir / dest.name
-                    shutil.move(str(dest), str(target))
-                    return target
+                    accepted = ModDBDownloader._accept_browser_candidate(
+                        dest, dl_dir, expected_name, expected_hash,
+                        stable_sizes, rejected
+                    )
+                    if accepted:
+                        print(f'[+] Download complete: {accepted.name}')
+                        return accepted
 
             sleep(1)
         raise ModDBDownloadError("Timed out waiting for download to complete in browser")
@@ -288,7 +411,11 @@ class ModDBDownloader(DefaultDownloader):
             stdout=DEVNULL, stderr=DEVNULL,
         )
         try:
-            downloaded = self._wait_for_download(profile_dir, dl_dir, since_us)
+            downloaded = self._wait_for_download(
+                profile_dir, dl_dir, since_us,
+                expected_name=self._user_wanted_name,
+                expected_hash=self._archivehash,
+            )
         finally:
             proc.terminate()
             try:
