@@ -14,6 +14,7 @@ to have a working game.
   * [Using easy-install](#using-easy-install)
   * [Using release](#using-release)
   * [Using AUR](#using-aur-arch-linux)
+* [Using Container (Docker / Podman)](#using-container-docker--podman)
 * [Commands](#commands)
 * [Troubleshoot](#troubleshoot)
 * [Contributing](CONTRIBUTING.md)
@@ -69,6 +70,50 @@ Or you can build it by yourself:
 `git clone https://aur.archlinux.org/gamma-launcher.git`
 `cd gamma-launcher`
 `makepkg -sri`
+
+## Using Container (Docker / Podman)
+
+A `Dockerfile` is bundled in the repo. It builds an Ubuntu 24.04 image with
+`gamma-launcher`, its dependencies, and a noVNC-served Firefox session for
+ModDB downloads that hit a Cloudflare challenge.
+
+### Build
+
+```sh
+podman build -t gamma-launcher .
+```
+
+(The same command works with `docker`.)
+
+### Run
+
+Create the local folders the launcher will use, then run a full install:
+
+```sh
+mkdir -p cache Anomaly GAMMA
+podman run -it --rm -p 127.0.0.1:6080:6080 -v ./:/app:Z gamma-launcher full-install \
+  --anomaly ./Anomaly \
+  --gamma ./GAMMA \
+  --cache-directory ./cache
+```
+
+The image uses `/app` as its working directory and `gamma-launcher` as its
+entrypoint, so launcher arguments are passed after the image name.
+
+### ModDB browser check
+
+ModDB may block automated downloads with a Cloudflare challenge. When the
+launcher hits one, it spawns Firefox inside the container and serves it via
+noVNC on port `6080`. Open:
+
+```text
+http://localhost:6080/vnc.html?autoconnect=1
+```
+
+Solve the challenge and click "Download Now". The launcher keeps the browser
+profile in `.moddb-firefox-profile` (under the mounted `/app` directory) and
+stores completed ModDB archives under `cache/moddb/<moddb-id>/`, so reruns
+reuse already-downloaded files.
 
 ## Commands
 
