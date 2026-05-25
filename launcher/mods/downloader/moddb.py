@@ -125,14 +125,12 @@ class ModDBDownloader(DefaultDownloader):
         return to / 'moddb' / self.moddb_id
 
     @staticmethod
-    def _quarantine_browser_download(path: Path, reason: str) -> None:
-        invalid = path.with_name(f'{path.name}.invalid-{int(time.time())}')
-        print(f'[!] Ignoring browser download {path.name}: {reason}')
+    def _remove_browser_download(path: Path, reason: str) -> None:
         try:
-            path.rename(invalid)
-            print(f'[*] Moved rejected download to {invalid}')
+            path.unlink()
+            print(f'[*] Removed rejected download {path}')
         except OSError as e:
-            print(f'[!] Could not move rejected download {path}: {e}')
+            print(f'[!] Could not remove rejected download {path}: {e}')
 
     @staticmethod
     def _browser_archive_rejection_reason(
@@ -176,19 +174,17 @@ class ModDBDownloader(DefaultDownloader):
         candidate: Path,
         key: str,
         reason: str,
-        rejected: set[str] = None,
-        quarantine_invalid: bool = True,
+        rejected: dict[str, str] = None,
+        remove_invalid: bool = True,
     ) -> None:
         if rejected is not None and key in rejected:
             return
 
-        if quarantine_invalid:
-            ModDBDownloader._quarantine_browser_download(candidate, reason)
-        else:
-            print(f'[!] Ignoring browser download {candidate.name}: {reason}')
+        if remove_invalid:
+            ModDBDownloader._remove_browser_download(candidate, reason)
 
         if rejected is not None:
-            rejected.add(key)
+            rejected[key] = f'{candidate.name}: {reason}'
 
     @staticmethod
     def _accept_browser_candidate(
@@ -197,8 +193,8 @@ class ModDBDownloader(DefaultDownloader):
         expected_name: str = None,
         expected_hash: str = None,
         stable_sizes: dict[str, int] = None,
-        rejected: set[str] = None,
-        quarantine_invalid: bool = True,
+        rejected: dict[str, str] = None,
+        remove_invalid: bool = True,
     ) -> Path | None:
         if expected_name and candidate.name != expected_name:
             return None
@@ -222,7 +218,7 @@ class ModDBDownloader(DefaultDownloader):
         reason = ModDBDownloader._browser_archive_rejection_reason(candidate, expected_hash)
         if reason:
             ModDBDownloader._reject_browser_candidate(
-                candidate, key, reason, rejected, quarantine_invalid
+                candidate, key, reason, rejected, remove_invalid
             )
             return None
 
@@ -235,6 +231,10 @@ class ModDBDownloader(DefaultDownloader):
 
     def _get_cached_browser_archive(self, to: Path) -> Path | None:
         dl_dir = self._browser_download_dir(to)
+        if dl_dir.is_dir():
+            for archive in [i for i in dl_dir.iterdir() if i.is_file() and '.invalid-' in i.name]:
+                self._remove_browser_download(archive, 'previously rejected download')
+
         archives = [
             i for i in dl_dir.iterdir()
             if i.is_file() and not i.name.endswith(_browser_download_temp_suffixes)
@@ -254,7 +254,7 @@ class ModDBDownloader(DefaultDownloader):
         for archive in archives.copy():
             reason = self._browser_archive_rejection_reason(archive, self._archivehash)
             if reason:
-                self._quarantine_browser_download(archive, reason)
+                self._remove_browser_download(archive, reason)
                 archives.remove(archive)
 
         if not archives:
@@ -348,7 +348,7 @@ class ModDBDownloader(DefaultDownloader):
         expected_name: str = None,
         expected_hash: str = None,
         stable_sizes: dict[str, int] = None,
-        rejected: set[str] = None,
+        rejected: dict[str, str] = None,
     ) -> Path | None:
         if not dl_dir.is_dir():
             return None
@@ -360,7 +360,7 @@ class ModDBDownloader(DefaultDownloader):
         for candidate in candidates:
             accepted = ModDBDownloader._accept_browser_candidate(
                 candidate, dl_dir, expected_name, expected_hash,
-                stable_sizes, rejected, quarantine_invalid=False
+                stable_sizes, rejected, remove_invalid=False
             )
             if accepted:
                 return accepted
@@ -375,7 +375,7 @@ class ModDBDownloader(DefaultDownloader):
         expected_name: str = None,
         expected_hash: str = None,
         stable_sizes: dict[str, int] = None,
-        rejected: set[str] = None,
+        rejected: dict[str, str] = None,
     ) -> tuple[Path | None, bool]:
         info = ModDBDownloader._get_download_info_from_places(
             profile_dir, since_us, expected_name
@@ -389,7 +389,7 @@ class ModDBDownloader(DefaultDownloader):
 
         accepted = ModDBDownloader._accept_browser_candidate(
             dest, dl_dir, expected_name, expected_hash,
-            stable_sizes, rejected, quarantine_invalid=False
+            stable_sizes, rejected, remove_invalid=False
         )
         return accepted, True
 
@@ -401,7 +401,7 @@ class ModDBDownloader(DefaultDownloader):
     ) -> Path:
         logged_dest = False
         stable_sizes = {}
-        rejected = set()
+        rejected = {}
         prompt_shown = prompt_after == 0
         if prompt_shown:
             print(f'[*] click to solve captcha: {_browser_prompt_url}')
@@ -419,10 +419,8 @@ class ModDBDownloader(DefaultDownloader):
                 print(f'[+] Download complete: {accepted.name}')
                 return accepted
 
-            db = profile_dir / 'places.sqlite'
             if not logged_dest and tick % 20 == 0:
-                size_info = f'found ({db.stat().st_size} bytes)' if db.exists() else 'not found'
-                print(f'[*] Waiting for download... places.sqlite: {size_info}')
+                print('[*] Waiting for download to start...')
 
             accepted, detected = ModDBDownloader._accept_places_download(
                 profile_dir, dl_dir, since_us, expected_name, expected_hash,
@@ -436,7 +434,11 @@ class ModDBDownloader(DefaultDownloader):
                 return accepted
 
             sleep(1)
-        raise ModDBDownloadError("Timed out waiting for download to complete in browser")
+        message = "Timed out waiting for download to complete in browser"
+        if rejected:
+            message += "\nRejected browser download(s):\n"
+            message += "\n".join(f"- {reason}" for reason in rejected.values())
+        raise ModDBDownloadError(message)
 
     def _download_with_browser(self, to: Path) -> Path:
         global _browser_download_succeeded

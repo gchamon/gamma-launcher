@@ -255,12 +255,23 @@ class FullInstall:
     def _install_mods(self) -> None:
         mods = read_mod_maker(self._grok_mod_dir / 'G.A.M.M.A' / 'modpack_data')
         mods_len = len(mods)
+        errors = []
         for i, mod in enumerate(mods):
-            print(f'[+] Processing mod {mod.info.title or mod.info.name} ({i}/{mods_len})')
+            mod_name = mod.info.title or mod.info.name
+            print(f'[+] Processing mod {mod_name} ({i}/{mods_len})')
             if mod.info.name == "164- Hunger Thirst Sleep UI 0.71 - xcvb":
                 continue
-            mod.download(self._dl_dir, use_cached=True)
-            mod.install(self._mod_dir)
+            try:
+                mod.download(self._dl_dir, use_cached=True)
+                mod.install(self._mod_dir)
+            except Exception as e:
+                print(f'[!] Failed to install {mod_name}: {e}')
+                errors.append(f'- {mod_name}: {e}')
+
+        if errors:
+            raise RuntimeError(
+                f"Failed to install {len(errors)} mod(s):\n" + "\n".join(errors)
+            )
 
     def _install_git_resources(self) -> None:
         print('[+] Installing Git Resources')
