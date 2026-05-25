@@ -171,6 +171,25 @@ class ModDBDownloader(DefaultDownloader):
         ))
 
     @staticmethod
+    def _reject_browser_candidate(
+        candidate: Path,
+        key: str,
+        reason: str,
+        rejected: set[str] = None,
+        quarantine_invalid: bool = True,
+    ) -> None:
+        if rejected is not None and key in rejected:
+            return
+
+        if quarantine_invalid:
+            ModDBDownloader._quarantine_browser_download(candidate, reason)
+        else:
+            print(f'[!] Ignoring browser download {candidate.name}: {reason}')
+
+        if rejected is not None:
+            rejected.add(key)
+
+    @staticmethod
     def _accept_browser_candidate(
         candidate: Path,
         dl_dir: Path,
@@ -201,13 +220,9 @@ class ModDBDownloader(DefaultDownloader):
 
         reason = ModDBDownloader._browser_archive_rejection_reason(candidate, expected_hash)
         if reason:
-            if rejected is None or key not in rejected:
-                if quarantine_invalid:
-                    ModDBDownloader._quarantine_browser_download(candidate, reason)
-                else:
-                    print(f'[!] Ignoring browser download {candidate.name}: {reason}')
-                if rejected is not None:
-                    rejected.add(key)
+            ModDBDownloader._reject_browser_candidate(
+                candidate, key, reason, rejected, quarantine_invalid
+            )
             return None
 
         if candidate.parent == dl_dir:
@@ -325,6 +340,57 @@ class ModDBDownloader(DefaultDownloader):
         return None
 
     @staticmethod
+    def _accept_download_dir_candidate(
+        dl_dir: Path,
+        expected_name: str = None,
+        expected_hash: str = None,
+        stable_sizes: dict[str, int] = None,
+        rejected: set[str] = None,
+    ) -> Path | None:
+        if not dl_dir.is_dir():
+            return None
+
+        candidates = [
+            f for f in dl_dir.iterdir()
+            if f.is_file() and not f.name.endswith(('.part', '.crdownload'))
+        ]
+        for candidate in candidates:
+            accepted = ModDBDownloader._accept_browser_candidate(
+                candidate, dl_dir, expected_name, expected_hash,
+                stable_sizes, rejected, quarantine_invalid=False
+            )
+            if accepted:
+                return accepted
+
+        return None
+
+    @staticmethod
+    def _accept_places_download(
+        profile_dir: Path,
+        dl_dir: Path,
+        since_us: int,
+        expected_name: str = None,
+        expected_hash: str = None,
+        stable_sizes: dict[str, int] = None,
+        rejected: set[str] = None,
+    ) -> tuple[Path | None, bool]:
+        info = ModDBDownloader._get_download_info_from_places(
+            profile_dir, since_us, expected_name
+        )
+        if info is None:
+            return None, False
+
+        dest, is_complete = info
+        if not is_complete:
+            return None, True
+
+        accepted = ModDBDownloader._accept_browser_candidate(
+            dest, dl_dir, expected_name, expected_hash,
+            stable_sizes, rejected, quarantine_invalid=False
+        )
+        return accepted, True
+
+    @staticmethod
     def _wait_for_download(
         profile_dir: Path, dl_dir: Path, since_us: int, timeout: int = 600,
         expected_name: str = None, expected_hash: str = None,
@@ -343,41 +409,29 @@ class ModDBDownloader(DefaultDownloader):
                 prompt_shown = True
 
             # Fast path: prefs redirected the download into dl_dir
-            if dl_dir.is_dir():
-                candidates = [
-                    f for f in dl_dir.iterdir()
-                    if f.is_file() and not f.name.endswith(('.part', '.crdownload'))
-                ]
-                for candidate in candidates:
-                    accepted = ModDBDownloader._accept_browser_candidate(
-                        candidate, dl_dir, expected_name, expected_hash,
-                        stable_sizes, rejected, quarantine_invalid=False
-                    )
-                    if accepted:
-                        print(f'[+] Download complete: {accepted.name}')
-                        return accepted
+            accepted = ModDBDownloader._accept_download_dir_candidate(
+                dl_dir, expected_name, expected_hash, stable_sizes, rejected
+            )
+            if accepted:
+                print(f'[+] Download complete: {accepted.name}')
+                return accepted
 
             db = profile_dir / 'places.sqlite'
             if not logged_dest and tick % 20 == 0:
                 size_info = f'found ({db.stat().st_size} bytes)' if db.exists() else 'not found'
                 print(f'[*] Waiting for download... places.sqlite: {size_info}')
 
-            info = ModDBDownloader._get_download_info_from_places(
-                profile_dir, since_us, expected_name
+            accepted, detected = ModDBDownloader._accept_places_download(
+                profile_dir, dl_dir, since_us, expected_name, expected_hash,
+                stable_sizes, rejected
             )
-            if info is not None:
-                dest, is_complete = info
+            if detected:
                 if not logged_dest:
-                    print(f'[*] Download detected: {dest} — waiting for Firefox to finish...')
+                    print('[*] Download detected in Firefox history — waiting for Firefox to finish...')
                     logged_dest = True
-                if is_complete:
-                    accepted = ModDBDownloader._accept_browser_candidate(
-                        dest, dl_dir, expected_name, expected_hash,
-                        stable_sizes, rejected, quarantine_invalid=False
-                    )
-                    if accepted:
-                        print(f'[+] Download complete: {accepted.name}')
-                        return accepted
+            if accepted:
+                print(f'[+] Download complete: {accepted.name}')
+                return accepted
 
             sleep(1)
         raise ModDBDownloadError("Timed out waiting for download to complete in browser")
