@@ -1,4 +1,5 @@
 from pathlib import Path
+from io import StringIO
 import json
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -179,7 +180,7 @@ class ModDBDownloaderTestCase(TestCase):
             )
 
     @patch('launcher.mods.downloader.moddb.sleep')
-    def test_wait_for_download_rejects_invalid_then_accepts_valid_file(self, mock_sleep) -> None:
+    def test_wait_for_download_ignores_live_invalid_then_accepts_valid_file(self, mock_sleep) -> None:
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
             pdir = Path(dir)
             profile = pdir / 'profile'
@@ -190,11 +191,10 @@ class ModDBDownloaderTestCase(TestCase):
             html.write_text('<html><title>Opps - ModDB</title>')
 
             def after_first_sleep(_seconds):
-                if not any(dl_dir.glob('expected.zip.invalid-*')):
+                if not html.exists():
                     return
-                valid = dl_dir / 'expected.zip'
-                if not valid.exists():
-                    self._write_zip(valid)
+                if html.read_text(errors='ignore').startswith('<html>'):
+                    self._write_zip(html)
 
             mock_sleep.side_effect = after_first_sleep
 
@@ -205,7 +205,90 @@ class ModDBDownloaderTestCase(TestCase):
                 ),
                 dl_dir / 'expected.zip'
             )
-            self.assertEqual(len(list(dl_dir.glob('expected.zip.invalid-*'))), 1)
+            self.assertTrue(html.exists())
+            self.assertEqual(len(list(dl_dir.glob('expected.zip.invalid-*'))), 0)
+
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_live_invalid_candidate_is_not_moved(self, stdout) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            archive = pdir / 'expected.zip'
+            archive.write_text('<html><title>Opps - ModDB</title>')
+            sizes = {str(archive): archive.stat().st_size}
+            rejected = set()
+
+            self.assertIsNone(ModDBDownloader._accept_browser_candidate(
+                archive, pdir, expected_name='expected.zip',
+                stable_sizes=sizes, rejected=rejected,
+                quarantine_invalid=False,
+            ))
+            self.assertTrue(archive.exists())
+            self.assertEqual(len(list(pdir.glob('expected.zip.invalid-*'))), 0)
+            self.assertEqual(stdout.getvalue().count('Ignoring browser download'), 1)
+
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_wait_for_download_prints_captcha_prompt_immediately(self, stdout) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
+            archive = dl_dir / 'expected.zip'
+            self._write_zip(archive)
+
+            self.assertEqual(
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=2,
+                    expected_name='expected.zip',
+                ),
+                archive
+            )
+            self.assertIn('click to solve captcha:', stdout.getvalue())
+
+    @patch('launcher.mods.downloader.moddb.sleep')
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_wait_for_download_delays_captcha_prompt_after_prior_success(self, stdout, mock_sleep) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
+
+            def create_archive(_seconds):
+                archive = dl_dir / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
+
+            mock_sleep.side_effect = create_archive
+
+            self.assertEqual(
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=4,
+                    expected_name='expected.zip', prompt_after=20,
+                ),
+                dl_dir / 'expected.zip'
+            )
+            self.assertNotIn('click to solve captcha:', stdout.getvalue())
+
+    @patch('launcher.mods.downloader.moddb.sleep')
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_wait_for_download_prints_delayed_captcha_prompt_once(self, stdout, mock_sleep) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
+
+            with self.assertRaises(Exception):
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=22,
+                    expected_name='expected.zip', prompt_after=20,
+                )
+
+            self.assertEqual(stdout.getvalue().count('click to solve captcha:'), 1)
 
     @patch('launcher.mods.downloader.moddb.ModDBDownloader._download_with_browser')
     @patch('launcher.mods.downloader.moddb.g_session.get')

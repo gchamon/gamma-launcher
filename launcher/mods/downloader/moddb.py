@@ -21,6 +21,8 @@ from launcher.mods.downloader.base import DefaultDownloader, g_session
 
 _browser_processes = []
 _browser_services_started = False
+_browser_download_succeeded = False
+_browser_prompt_url = 'http://localhost:6080/vnc.html?autoconnect=1'
 
 
 class ModDBDownloader(DefaultDownloader):
@@ -176,6 +178,7 @@ class ModDBDownloader(DefaultDownloader):
         expected_hash: str = None,
         stable_sizes: dict[str, int] = None,
         rejected: set[str] = None,
+        quarantine_invalid: bool = True,
     ) -> Path | None:
         if expected_name and candidate.name != expected_name:
             return None
@@ -199,7 +202,10 @@ class ModDBDownloader(DefaultDownloader):
         reason = ModDBDownloader._browser_archive_rejection_reason(candidate, expected_hash)
         if reason:
             if rejected is None or key not in rejected:
-                ModDBDownloader._quarantine_browser_download(candidate, reason)
+                if quarantine_invalid:
+                    ModDBDownloader._quarantine_browser_download(candidate, reason)
+                else:
+                    print(f'[!] Ignoring browser download {candidate.name}: {reason}')
                 if rejected is not None:
                     rejected.add(key)
             return None
@@ -265,7 +271,7 @@ class ModDBDownloader(DefaultDownloader):
 
     @staticmethod
     def _get_download_info_from_places(
-        profile_dir: Path, since_us: int, expected_name: str = None, debug: bool = False
+        profile_dir: Path, since_us: int, expected_name: str = None
     ) -> tuple[Path, bool] | None:
         db = profile_dir / 'places.sqlite'
         wal = profile_dir / 'places.sqlite-wal'
@@ -291,19 +297,6 @@ class ModDBDownloader(DefaultDownloader):
                 shutil.copy2(str(shm), str(tmp_shm))
             conn = sqlite3.connect(str(tmp))
             try:
-                if debug:
-                    names = [r[0] for r in conn.execute(
-                        "SELECT DISTINCT name FROM moz_anno_attributes"
-                    ).fetchall()]
-                    wal_size = wal.stat().st_size if wal.exists() else 0
-                    shm_size = shm.stat().st_size if shm.exists() else 0
-                    total = conn.execute(
-                        "SELECT COUNT(*) FROM moz_annos d"
-                        " JOIN moz_anno_attributes da ON d.anno_attribute_id = da.id"
-                        " WHERE da.name = 'downloads/destinationFileURI'"
-                    ).fetchone()[0]
-                    print(f'[*] places.sqlite annotation attributes: {names}')
-                    print(f'[*] WAL={wal_size}B SHM={shm_size}B total download rows={total}')
                 rows = conn.execute(
                     "SELECT d.content,"
                     " (SELECT m.content FROM moz_annos m"
@@ -334,14 +327,21 @@ class ModDBDownloader(DefaultDownloader):
     @staticmethod
     def _wait_for_download(
         profile_dir: Path, dl_dir: Path, since_us: int, timeout: int = 600,
-        expected_name: str = None, expected_hash: str = None
+        expected_name: str = None, expected_hash: str = None,
+        prompt_after: int = 0
     ) -> Path:
         logged_dest = False
-        schema_dumped = False
         stable_sizes = {}
         rejected = set()
+        prompt_shown = prompt_after == 0
+        if prompt_shown:
+            print(f'[*] click to solve captcha: {_browser_prompt_url}')
 
         for tick in range(timeout):
+            if not prompt_shown and tick >= prompt_after:
+                print(f'[*] click to solve captcha: {_browser_prompt_url}')
+                prompt_shown = True
+
             # Fast path: prefs redirected the download into dl_dir
             if dl_dir.is_dir():
                 candidates = [
@@ -351,23 +351,19 @@ class ModDBDownloader(DefaultDownloader):
                 for candidate in candidates:
                     accepted = ModDBDownloader._accept_browser_candidate(
                         candidate, dl_dir, expected_name, expected_hash,
-                        stable_sizes, rejected
+                        stable_sizes, rejected, quarantine_invalid=False
                     )
                     if accepted:
                         print(f'[+] Download complete: {accepted.name}')
                         return accepted
 
             db = profile_dir / 'places.sqlite'
-            if not logged_dest and tick % 15 == 0:
+            if not logged_dest and tick % 20 == 0:
                 size_info = f'found ({db.stat().st_size} bytes)' if db.exists() else 'not found'
-                print(f'[*] Waiting for download... places.sqlite: {size_info} | profile: {profile_dir}')
-
-            debug = db.exists() and not schema_dumped
-            if debug:
-                schema_dumped = True
+                print(f'[*] Waiting for download... places.sqlite: {size_info}')
 
             info = ModDBDownloader._get_download_info_from_places(
-                profile_dir, since_us, expected_name, debug=debug
+                profile_dir, since_us, expected_name
             )
             if info is not None:
                 dest, is_complete = info
@@ -377,7 +373,7 @@ class ModDBDownloader(DefaultDownloader):
                 if is_complete:
                     accepted = ModDBDownloader._accept_browser_candidate(
                         dest, dl_dir, expected_name, expected_hash,
-                        stable_sizes, rejected
+                        stable_sizes, rejected, quarantine_invalid=False
                     )
                     if accepted:
                         print(f'[+] Download complete: {accepted.name}')
@@ -387,6 +383,8 @@ class ModDBDownloader(DefaultDownloader):
         raise ModDBDownloadError("Timed out waiting for download to complete in browser")
 
     def _download_with_browser(self, to: Path) -> Path:
+        global _browser_download_succeeded
+
         cached = self._get_cached_browser_archive(to)
         if cached:
             self._archive = cached
@@ -399,11 +397,6 @@ class ModDBDownloader(DefaultDownloader):
         profile_dir.mkdir(parents=True, exist_ok=True)
         self._write_firefox_prefs(profile_dir, dl_dir)
 
-        print('[+] ModDB requires a real browser session')
-        print('[*] Open http://localhost:6080/vnc.html?autoconnect=1')
-        print('[*] Solve the Cloudflare check, then click "Download Now" in the browser.')
-        print('[*] The launcher will continue automatically once the file finishes downloading.')
-
         since_us = int(time.time() * 1_000_000)
         proc = Popen(
             ['firefox', '--no-remote', '--profile', str(profile_dir), self._url],
@@ -415,6 +408,7 @@ class ModDBDownloader(DefaultDownloader):
                 profile_dir, dl_dir, since_us,
                 expected_name=self._user_wanted_name,
                 expected_hash=self._archivehash,
+                prompt_after=20 if _browser_download_succeeded else 0,
             )
         finally:
             proc.terminate()
@@ -425,6 +419,7 @@ class ModDBDownloader(DefaultDownloader):
                 proc.wait()
 
         self._archive = downloaded
+        _browser_download_succeeded = True
         return downloaded
 
     def _set_vars_from_metadata(self):
