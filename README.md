@@ -63,10 +63,10 @@ noVNC on port `6080`. Open:
 http://localhost:6080/vnc.html?autoconnect=1
 ```
 
-Solve the challenge and click "Download Now". The launcher keeps the browser
-profile in `.moddb-firefox-profile` (under the mounted `/app` directory) and
-stores completed ModDB archives under `cache/moddb/<moddb-id>/`, so reruns
-reuse already-downloaded files.
+Solve the challenge and wait for the download to start. The launcher keeps the
+browser profile in `.moddb-firefox-profile` (under the mounted `/app`
+directory) and stores completed ModDB archives under `cache/moddb/<moddb-id>/`,
+so reruns reuse already-downloaded files.
 
 ## Commands
 
