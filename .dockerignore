@@ -1,0 +1,10 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.egg-info
+build
+dist
+doc
+tests
+easy-install

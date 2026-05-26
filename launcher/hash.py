@@ -1,6 +1,7 @@
 from hashlib import md5
 from pathlib import Path
-from tqdm import tqdm
+
+from launcher.progress import progress_bar
 
 
 def check_hash(file: Path, checksum: str, desc: str = None) -> bool:
@@ -16,10 +17,10 @@ def check_hash(file: Path, checksum: str, desc: str = None) -> bool:
     Return True if computed checksum and checksum match
     """
     hash = md5()
-    with open(file, 'rb') as f, tqdm(
+    with open(file, 'rb') as f, progress_bar(
         desc=desc or f"Calculating hash of {file.name}",
         unit="iB", unit_scale=True, unit_divisor=1024,
-        total=file.stat().st_size, ascii=True
+        total=file.stat().st_size
     ) as progress:
         while True:
             s = f.read(1024*1024)

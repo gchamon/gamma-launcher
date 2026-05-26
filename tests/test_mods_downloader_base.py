@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import copy
 
 from launcher.exceptions import HashError
-from launcher.mods.downloader.base import DefaultDownloader
+from launcher.mods.downloader.base import DefaultDownloader, _print_retry_message
 
 from common import basic_url, data_dir, git_archive_url, mocked_get
 
@@ -23,6 +23,30 @@ class DefaultDownloaderTestCase(TestCase):
 
         with self.assertRaises(RuntimeError):
             o.archive
+
+    def test_retry_waits_are_exponential_and_capped(self):
+        wait = DefaultDownloader.download.retry.wait
+
+        class RetryState:
+            def __init__(self, attempt_number):
+                self.attempt_number = attempt_number
+
+        self.assertEqual(wait(RetryState(1)), 1)
+        self.assertEqual(wait(RetryState(2)), 2)
+        self.assertEqual(wait(RetryState(3)), 4)
+        self.assertEqual(wait(RetryState(6)), 30)
+
+    @patch('builtins.print')
+    def test_retry_message_uses_next_sleep(self, mock_print):
+        class NextAction:
+            sleep = 2
+
+        class RetryState:
+            next_action = NextAction()
+
+        _print_retry_message(RetryState())
+
+        mock_print.assert_called_once_with("Connection error, retrying in 2s...")
 
     @patch('launcher.mods.downloader.g_session.get', side_effect=mocked_get)
     def test_download_and_extract(self, mock_request):

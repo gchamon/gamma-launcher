@@ -37,7 +37,9 @@ jobs:
       run: python -m pip install .
 
     - name: Installing deps for doc & unit testing
-      run: sudo apt install libunrar5t64
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libunrar-dev p7zip-full
 
     - name: Generate documentation
       run: |

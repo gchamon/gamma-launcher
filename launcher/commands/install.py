@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from typing import Dict
 
 from launcher.commands import CheckAnomaly
-from launcher.common import anomaly_arg, gamma_arg, cache_dir_arg
+from launcher.common import anomaly_arg, gamma_arg, cache_dir_arg, parse_duration
 
 from launcher.mods import BaseArchive, GithubArchive, GitResource, ModDBArchive, read_mod_maker
 from launcher.userltx import UserLTX
@@ -46,6 +46,12 @@ class AnomalyInstall:
             "action": "store_true",
             "dest": "anomaly_purge_cache"
         },
+        "--browser-download-timeout": {
+            "help": "Timeout for ModDB browser downloads (default: 10m)",
+            "type": parse_duration,
+            "default": parse_duration("10m"),
+            "dest": "browser_download_timeout",
+        },
         **cache_dir_arg,
     }
 
@@ -69,7 +75,11 @@ class AnomalyInstall:
             "base-1.5.3", "https://www.moddb.com/downloads/start/277404",
             "https://www.moddb.com/mods/stalker-anomaly/downloads/stalker-anomaly-153"
         )
-        mod_base.download(self._cache_dir, use_cached=True)
+        mod_base.download(
+            self._cache_dir,
+            use_cached=True,
+            browser_download_timeout=args.browser_download_timeout,
+        )
         print("  - Extracting")
         mod_base.install(self._anomaly_dir)
 
@@ -177,6 +187,10 @@ def _create_full_install_args() -> Dict:
             "help": "Do not overwrite user configuration when patching Anomaly directory",
             "action": "store_true",
         },
+        "--force-reinstall": {
+            "help": "Reinstall mods even when installed metadata matches the downloaded archive",
+            "action": "store_true",
+        },
     })
 
     return arguments
@@ -255,12 +269,27 @@ class FullInstall:
     def _install_mods(self) -> None:
         mods = read_mod_maker(self._grok_mod_dir / 'G.A.M.M.A' / 'modpack_data')
         mods_len = len(mods)
+        errors = []
         for i, mod in enumerate(mods):
-            print(f'[+] Processing mod {mod.info.title or mod.info.name} ({i}/{mods_len})')
+            mod_name = mod.info.title or mod.info.name
+            print(f'[+] Processing mod {mod_name} ({i}/{mods_len})')
             if mod.info.name == "164- Hunger Thirst Sleep UI 0.71 - xcvb":
                 continue
-            mod.download(self._dl_dir, use_cached=True)
-            mod.install(self._mod_dir)
+            try:
+                mod.download(
+                    self._dl_dir,
+                    use_cached=True,
+                    browser_download_timeout=getattr(self, "_browser_download_timeout", parse_duration("10m")),
+                )
+                mod.install(self._mod_dir, force=getattr(self, "_force_reinstall", False))
+            except Exception as e:
+                print(f'[!] Failed to install {mod_name}: {e}')
+                errors.append(f'- {mod_name}: {e}')
+
+        if errors:
+            raise RuntimeError(
+                f"Failed to install {len(errors)} mod(s):\n" + "\n".join(errors)
+            )
 
     def _install_git_resources(self) -> None:
         print('[+] Installing Git Resources')
@@ -304,6 +333,8 @@ AutomaticArchiveInvalidation=false
         self._dl_dir = self._gamma_dir / "downloads"
         self._mod_dir = self._gamma_dir / "mods"
         self._grok_mod_dir = self._gamma_dir / ".Grok's Modpack Installer"
+        self._browser_download_timeout = args.browser_download_timeout
+        self._force_reinstall = args.force_reinstall
 
         # Make sure folder are existing
         self._dl_dir.mkdir(parents=True, exist_ok=True)

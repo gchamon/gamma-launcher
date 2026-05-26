@@ -20,7 +20,7 @@ class GithubDownloader(DefaultDownloader):
     def check(self, to: Path, update_cache: bool = False) -> None:
         pass
 
-    def download(self, to: Path, use_cached: bool = False, filename: str = None) -> Path:
+    def download(self, to: Path, use_cached: bool = False, filename: str = None, **kwargs) -> Path:
         user, project, *_ = self.regexp_url.match(self._url).groups()
 
         if "release" in self._url or self._url.endswith(".zip"):

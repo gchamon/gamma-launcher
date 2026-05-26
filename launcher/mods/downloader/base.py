@@ -4,14 +4,14 @@ from os.path import basename
 from pathlib import Path
 from re import compile
 from requests.exceptions import ConnectionError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
-from tqdm import tqdm
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from urllib.parse import urlparse
 
 from launcher import __version__
 from launcher.exceptions import HashError
 from launcher.hash import check_hash
 from launcher.archive import extract_archive
+from launcher.progress import progress_bar
 
 g_session = create_scraper(
     browser={
@@ -19,6 +19,11 @@ g_session = create_scraper(
     }
 )
 "`cloudscraper` scraper object used for all HTTP requests"
+
+
+def _print_retry_message(retry_state) -> None:
+    sleep = retry_state.next_action.sleep
+    print(f"Connection error, retrying in {sleep:g}s...")
 
 
 class DefaultDownloader:
@@ -100,13 +105,13 @@ class DefaultDownloader:
         (self._check_if_exist if self._archive.exists() else self._check_if_non_exist)(to, update_cache)
 
     @retry(
-        before_sleep=lambda _: print("Connection error, retrying in 30s..."),
+        before_sleep=_print_retry_message,
         reraise=True,
         retry=retry_if_exception_type(ConnectionError),
         stop=stop_after_attempt(3),
-        wait=wait_fixed(30)
+        wait=wait_exponential(multiplier=1, min=1, max=30)
     )
-    def download(self, to: Path, use_cached=False, hash: str = None) -> Path:
+    def download(self, to: Path, use_cached=False, hash: str = None, **kwargs) -> Path:
         """Download the file
 
         Argument(s):
@@ -131,9 +136,11 @@ class DefaultDownloader:
 
         r = g_session.get(self._url, stream=True)
         r.raise_for_status()
-        with open(self._archive, "wb") as f, tqdm(
-            desc=f"  - Downloading {self._archive.name} ({self._url})",
-            unit="iB", unit_scale=True, unit_divisor=1024
+        total = int(r.headers.get("content-length", 0)) or None
+        with open(self._archive, "wb") as f, progress_bar(
+            desc=f"Downloading {self._archive.name}",
+            unit="iB", unit_scale=True, unit_divisor=1024,
+            total=total
         ) as progress:
             for chunk in r.iter_content(chunk_size=1 * 1024 * 1024):
                 if chunk:

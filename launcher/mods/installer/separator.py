@@ -10,7 +10,7 @@ class SeparatorInstaller(BaseInstaller):
     def __init__(self, name: str) -> None:
         super().__init__(ModInfo({'name': name}))
 
-    def install(self, to: Path) -> None:
+    def install(self, to: Path, force: bool = False) -> None:
         install_dir = to / self.info.name
 
         print(f'[+] Installing separator: {self.info.name}')
