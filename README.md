@@ -10,72 +10,25 @@ to have a working game.
 ## Table of contents
 
 * [Installation](#installation)
-  * [Using pip](#using-pip-from-source)
-  * [Using easy-install](#using-easy-install)
-  * [Using release](#using-release)
-  * [Using AUR](#using-aur-arch-linux)
-* [Using Container (Docker / Podman)](#using-container-docker--podman)
+  * [Build](#build)
+  * [Run](#run)
+  * [ModDB browser check](#moddb-browser-check)
 * [Commands](#commands)
 * [Troubleshoot](#troubleshoot)
+* [Alternate installation methods](ALTERNATE_INSTALL.md)
 * [Contributing](CONTRIBUTING.md)
 
 ## Installation
 
-### Using pip (from source)
+The recommended installation method is the container workflow with Podman or
+Docker. It gives the launcher a reproducible Ubuntu 24.04 runtime with
+`gamma-launcher`, `7z`, `libunrar`, Firefox, and noVNC already configured.
 
-It's strongly advised to install this in a [venv](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#creating-a-virtual-environment) (Python Virtual Environment)
+This avoids distro-specific dependency setup and avoids `easy-install`, which
+downloads dependency source archives directly from upstream maintainer sites.
 
-A quick guide on how to do this is to open your terminal/command prompt and navigating to the downloaded folder containing gamma-launcher, and typing `python3 -m venv env` on Linux, or `py -m venv env` on Windows.
-
-You will then have to enter the virtual environment by typing `source env/bin/activate` on Linux, or `.\env\Scripts\activate` on Windows.
-
-To confirm that you're in the right place, type `which python` on Linux, or `where python` on Windows. It should print out either `.../env/bin/python` or `...\env\Scripts\python.exe`, respectively.
-
-You may first have to upgrade pip for the installation to work. (If it's complaining about a 'bad interpreter', for example.) If this is the case, type `pip install --upgrade pip`.
-
-If currently in your gamma-launcher folder, you can simply type `pip install .` OR `pip install directory`. Replace 'directory' with the actual path of said directory. The specificed directory must contain the gamma-launcher setup.py file.
-
-If all went well, you can now use the `gamma-launcher` command as intended.
-
-(Type `deactivate` to leave the virtual environment. Use the previous `source` command to re-enter it.)
-
-### Using easy-install
-
-Make sure you have a toolchain available to compile `7z` and *libunrar.so* and python3-venv installed then:
-
-```sh
-$ cd easy-install
-$ make -j$(nproc)
-$ sudo make install
-```
-
-### Using release
-
-By downloading gamma-launcher from the [latest release](https://github.com/Mord3rca/gamma-launcher/releases/latest), you can use it without any installation. Everything is self contained in an executable. Release built with Ubuntu.
-
-Use the `--cache-directory` option to re-use previously downloaded files.
-
-### Using AUR (Arch Linux)
-
-This installation method is **not supported** on this repo, contact [AUR maintainers](https://aur.archlinux.org/packages/gamma-launcher) for any issue with this installation method.
-
-On Arch Linux and Arch-based operating systems, you can download package from AUR:
-
-`yay -S gamma-launcher`
-
-Use at your own risk!
-
-Or you can build it by yourself:
-
-`git clone https://aur.archlinux.org/gamma-launcher.git`
-`cd gamma-launcher`
-`makepkg -sri`
-
-## Using Container (Docker / Podman)
-
-A `Dockerfile` is bundled in the repo. It builds an Ubuntu 24.04 image with
-`gamma-launcher`, its dependencies, and a noVNC-served Firefox session for
-ModDB downloads that hit a Cloudflare challenge.
+Native and community packaging methods are documented separately in
+[ALTERNATE_INSTALL.md](ALTERNATE_INSTALL.md).
 
 ### Build
 
@@ -83,7 +36,7 @@ ModDB downloads that hit a Cloudflare challenge.
 podman build -t gamma-launcher .
 ```
 
-(The same command works with `docker`.)
+The same command works with `docker`.
 
 ### Run
 
@@ -170,25 +123,11 @@ To use it: `gamma-launcher test-mod-maker --gamma <GAMMA path>`
 
 ## Troubleshoot
 
-### Glibc Errors
+### Native dependency errors
 
-Install gamma launcher in a venv. See the [Using pip (from source)](#using-pip-from-source) section above.
-
-### ModuleNotFoundError: No module named 'distutils'
-
-The `distutils` module is required to install Python packages but it was removed in Python 3.12.
-You can still use it by installing `setuptools` (inside the venv):
-
-```sh
-(venv) $ pip install setuptools
-```
-
-### LookupError: Couldn't find path to unrar library.
-You are missing a library that extracts RAR files. You can use something like `libunrar` on Linux. To install it run the following command:
-- On Debian **(non-free APT repository required)**: `sudo apt install libunrar5`
-- On Ubuntu: `sudo apt install libunrar5t64`
-- On Fedora **(RPM Fusion required)**: `sudo dnf install libunrar`. Note that before the installation you will need to enable the **non-free** RPM Fusion repository since the default package provided by Fedora will cause problems. [Instructions on how to enable it here](https://rpmfusion.org/Configuration).
-- On Arch/Manjaro: `sudo pacman -S libunrar`
+If you see errors about `glibc`, `distutils`, `libunrar`, or `7z`, use the
+container workflow above. Native dependency troubleshooting for alternate
+installation methods lives in [ALTERNATE_INSTALL.md](ALTERNATE_INSTALL.md).
 
 ### Shader compilation error
 
