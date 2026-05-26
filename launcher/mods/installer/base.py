@@ -35,7 +35,7 @@ class BaseInstaller:
 
         self._dl.extract(to)
 
-    def install(self, to: Path) -> None:
+    def install(self, to: Path, force: bool = False) -> None:
         self.extract(to)
 
     @property

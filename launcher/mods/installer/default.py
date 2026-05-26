@@ -11,6 +11,8 @@ from launcher.mods.installer.base import BaseInstaller
 class DefaultInstaller(BaseInstaller):
     "Installer which is used for ModDB provided mods"
 
+    _resume_version_keys = ('installationFile', 'version', 'newestversion')
+
     @staticmethod
     def _read_fomod_directives(dir: Path) -> Dict[Path, Path]:
         module_config = dir / 'fomod' / 'ModuleConfig.xml'
@@ -53,10 +55,28 @@ class DefaultInstaller(BaseInstaller):
             'size=1\n'
         )
 
-    def install(self, to: Path) -> None:
+    def _is_current_archive_installed(self, install_dir: Path) -> bool:
+        metaini = install_dir / 'meta.ini'
+        if not metaini.is_file():
+            return False
+
+        archive_name = self.archive.name
+        for line in metaini.read_text().splitlines():
+            key, separator, value = line.partition('=')
+            if separator and key in self._resume_version_keys and value == archive_name:
+                return True
+
+        return False
+
+    def install(self, to: Path, force: bool = False) -> None:
         install_dir = to / self.info.name
         install_dir.mkdir(exist_ok=True)
 
+        if not force and self._is_current_archive_installed(install_dir):
+            print(f'    Skipping {self.info.name}; {self.archive.name} is already installed')
+            return
+
+        print(f'    Extracting {self.archive.name}...')
         with DefaultTempDir(lambda x: self.extract(x), prefix="gamma-launcher-modinstall-") as pdir:
             iterator = [pdir] + ([pdir / i for i in self.info.subdirs] if self.info.subdirs else [])
             fdirectives = self._read_fomod_directives(pdir)

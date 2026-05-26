@@ -368,6 +368,18 @@ class ModDBDownloader(DefaultDownloader):
         return None
 
     @staticmethod
+    def _download_dir_has_candidate(dl_dir: Path, expected_name: str = None) -> bool:
+        if not dl_dir.is_dir():
+            return False
+
+        return any(
+            f.is_file()
+            and not f.name.endswith(_browser_download_temp_suffixes)
+            and (not expected_name or f.name == expected_name)
+            for f in dl_dir.iterdir()
+        )
+
+    @staticmethod
     def _accept_places_download(
         profile_dir: Path,
         dl_dir: Path,
@@ -402,18 +414,16 @@ class ModDBDownloader(DefaultDownloader):
         logged_dest = False
         stable_sizes = {}
         rejected = {}
-        prompt_shown = prompt_after == 0
-        if prompt_shown:
-            print(f'[*] click to solve captcha: {_browser_prompt_url}')
+        prompt_shown = False
+        download_detected = False
 
         for tick in range(timeout):
-            if not prompt_shown and tick >= prompt_after:
-                print(f'[*] click to solve captcha: {_browser_prompt_url}')
-                prompt_shown = True
-
             # Fast path: prefs redirected the download into dl_dir
             accepted = ModDBDownloader._accept_download_dir_candidate(
                 dl_dir, expected_name, expected_hash, stable_sizes, rejected
+            )
+            download_detected = download_detected or ModDBDownloader._download_dir_has_candidate(
+                dl_dir, expected_name
             )
             if accepted:
                 print(f'[+] Download complete: {accepted.name}')
@@ -429,9 +439,14 @@ class ModDBDownloader(DefaultDownloader):
             if detected and not logged_dest:
                 print('[*] Download detected in Firefox history — waiting for Firefox to finish...')
                 logged_dest = True
+            download_detected = download_detected or detected
             if accepted:
                 print(f'[+] Download complete: {accepted.name}')
                 return accepted
+
+            if not prompt_shown and not download_detected and tick >= prompt_after:
+                print(f'[*] click to solve captcha: {_browser_prompt_url}')
+                prompt_shown = True
 
             sleep(1)
         message = "Timed out waiting for download to complete in browser"

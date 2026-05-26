@@ -286,6 +286,23 @@ class ModDBDownloaderTestCase(TestCase):
             dl_dir = pdir / 'downloads'
             profile.mkdir()
             dl_dir.mkdir()
+
+            with self.assertRaises(Exception):
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=1,
+                    expected_name='expected.zip',
+                )
+
+            self.assertIn('click to solve captcha:', stdout.getvalue())
+
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_wait_for_download_does_not_prompt_when_archive_exists(self, stdout) -> None:
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
             archive = dl_dir / 'expected.zip'
             self._write_zip(archive)
 
@@ -296,7 +313,7 @@ class ModDBDownloaderTestCase(TestCase):
                 ),
                 archive
             )
-            self.assertIn('click to solve captcha:', stdout.getvalue())
+            self.assertNotIn('click to solve captcha:', stdout.getvalue())
 
     @patch('launcher.mods.downloader.moddb.sleep')
     @patch('sys.stdout', new_callable=StringIO)
@@ -341,6 +358,29 @@ class ModDBDownloaderTestCase(TestCase):
                 )
 
             self.assertEqual(stdout.getvalue().count('click to solve captcha:'), 1)
+
+    @patch('launcher.mods.downloader.moddb.ModDBDownloader._accept_places_download')
+    @patch('launcher.mods.downloader.moddb.sleep')
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_wait_for_download_suppresses_prompt_after_history_detection(
+        self, stdout, mock_sleep, mock_accept_places
+    ) -> None:
+        mock_accept_places.return_value = (None, True)
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+            profile = pdir / 'profile'
+            dl_dir = pdir / 'downloads'
+            profile.mkdir()
+            dl_dir.mkdir()
+
+            with self.assertRaises(Exception):
+                ModDBDownloader._wait_for_download(
+                    profile, dl_dir, since_us=0, timeout=22,
+                    expected_name='expected.zip', prompt_after=20,
+                )
+
+            self.assertIn('Download detected in Firefox history', stdout.getvalue())
+            self.assertNotIn('click to solve captcha:', stdout.getvalue())
 
     @patch('launcher.mods.downloader.moddb.ModDBDownloader._download_with_browser')
     @patch('launcher.mods.downloader.moddb.g_session.get')

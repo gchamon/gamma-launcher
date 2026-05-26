@@ -187,6 +187,10 @@ def _create_full_install_args() -> Dict:
             "help": "Do not overwrite user configuration when patching Anomaly directory",
             "action": "store_true",
         },
+        "--force-reinstall": {
+            "help": "Reinstall mods even when installed metadata matches the downloaded archive",
+            "action": "store_true",
+        },
     })
 
     return arguments
@@ -277,7 +281,7 @@ class FullInstall:
                     use_cached=True,
                     browser_download_timeout=getattr(self, "_browser_download_timeout", parse_duration("10m")),
                 )
-                mod.install(self._mod_dir)
+                mod.install(self._mod_dir, force=getattr(self, "_force_reinstall", False))
             except Exception as e:
                 print(f'[!] Failed to install {mod_name}: {e}')
                 errors.append(f'- {mod_name}: {e}')
@@ -330,6 +334,7 @@ AutomaticArchiveInvalidation=false
         self._mod_dir = self._gamma_dir / "mods"
         self._grok_mod_dir = self._gamma_dir / ".Grok's Modpack Installer"
         self._browser_download_timeout = args.browser_download_timeout
+        self._force_reinstall = args.force_reinstall
 
         # Make sure folder are existing
         self._dl_dir.mkdir(parents=True, exist_ok=True)

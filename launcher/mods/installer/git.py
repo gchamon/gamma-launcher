@@ -24,7 +24,7 @@ class GitResourceInstaller(BaseInstaller):
             if i.is_dir():
                 yield i
 
-    def install(self, to: Path) -> None:
+    def install(self, to: Path, force: bool = False) -> None:
         print(f'[+] Installing Git Resource mod: {self.info.url}')
         to.mkdir(exist_ok=True)
 
