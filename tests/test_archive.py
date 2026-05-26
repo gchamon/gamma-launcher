@@ -6,7 +6,7 @@ from unittest import mock, TestCase, skipIf
 
 from launcher.archive import extract_archive, get_mime_from_file, list_archive_content
 
-from common import data_dir
+from tests.common import data_dir
 
 
 class MimeTestCase(TestCase):

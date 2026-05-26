@@ -5,7 +5,7 @@ from pathlib import Path
 from launcher.archive import extract_archive
 from launcher.tempfile import DefaultTempDir
 
-from common import data_dir
+from tests.common import data_dir
 
 
 @skipIf(system() == 'Windows', 'Only make sense on *nix')

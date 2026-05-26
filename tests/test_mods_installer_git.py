@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
-from common import MockedDownloader
+from tests.common import MockedDownloader
 
 from launcher.mods.info import ModInfo
 from launcher.mods.installer.git import GitResourceInstaller

@@ -407,17 +407,19 @@ class ModDBDownloader(DefaultDownloader):
 
     @staticmethod
     def _wait_for_download(
-        profile_dir: Path, dl_dir: Path, since_us: int, timeout: int = 600,
+        profile_dir: Path, dl_dir: Path, since_us: int,
         expected_name: str = None, expected_hash: str = None,
-        prompt_after: int = 0
+        prompt_after: int = 0, reopen_browser=None
     ) -> Path:
         logged_dest = False
         stable_sizes = {}
         rejected = {}
         prompt_shown = False
         download_detected = False
+        tick = 0
 
-        for tick in range(timeout):
+        print('[*] Waiting for download to start...')
+        while True:
             # Fast path: prefs redirected the download into dl_dir
             accepted = ModDBDownloader._accept_download_dir_candidate(
                 dl_dir, expected_name, expected_hash, stable_sizes, rejected
@@ -428,9 +430,6 @@ class ModDBDownloader(DefaultDownloader):
             if accepted:
                 print(f'[+] Download complete: {accepted.name}')
                 return accepted
-
-            if not logged_dest and tick % 20 == 0:
-                print('[*] Waiting for download to start...')
 
             accepted, detected = ModDBDownloader._accept_places_download(
                 profile_dir, dl_dir, since_us, expected_name, expected_hash,
@@ -448,14 +447,13 @@ class ModDBDownloader(DefaultDownloader):
                 print(f'[*] click to solve captcha: {_browser_prompt_url}')
                 prompt_shown = True
 
-            sleep(1)
-        message = "Timed out waiting for download to complete in browser"
-        if rejected:
-            message += "\nRejected browser download(s):\n"
-            message += "\n".join(f"- {reason}" for reason in rejected.values())
-        raise ModDBDownloadError(message)
+            if reopen_browser is not None:
+                reopen_browser()
 
-    def _download_with_browser(self, to: Path, timeout: int = 600) -> Path:
+            tick += 1
+            sleep(1)
+
+    def _download_with_browser(self, to: Path) -> Path:
         global _browser_download_succeeded
 
         cached = self._get_cached_browser_archive(to)
@@ -470,19 +468,32 @@ class ModDBDownloader(DefaultDownloader):
         profile_dir.mkdir(parents=True, exist_ok=True)
         self._write_firefox_prefs(profile_dir, dl_dir)
 
+        proc = None
+
+        def start_browser():
+            return Popen(
+                ['firefox', '--no-remote', '--profile', str(profile_dir), self._url],
+                env={**environ, 'DISPLAY': ':99'},
+                stdout=DEVNULL, stderr=DEVNULL,
+            )
+
+        def reopen_browser_if_closed():
+            nonlocal proc
+            if proc.poll() is None:
+                return
+
+            print('[*] Firefox closed before download completed; reopening...')
+            proc = start_browser()
+
         since_us = int(time.time() * 1_000_000)
-        proc = Popen(
-            ['firefox', '--no-remote', '--profile', str(profile_dir), self._url],
-            env={**environ, 'DISPLAY': ':99'},
-            stdout=DEVNULL, stderr=DEVNULL,
-        )
+        proc = start_browser()
         try:
             downloaded = self._wait_for_download(
                 profile_dir, dl_dir, since_us,
                 expected_name=self._user_wanted_name,
                 expected_hash=self._archivehash,
                 prompt_after=20 if _browser_download_succeeded else 0,
-                timeout=timeout,
+                reopen_browser=reopen_browser_if_closed,
             )
         finally:
             proc.terminate()
@@ -531,12 +542,11 @@ class ModDBDownloader(DefaultDownloader):
 
     def download(self, to: Path, use_cached: bool = False, *args, **kwargs) -> Path:
         self._set_vars_from_metadata()
-        browser_download_timeout = kwargs.pop("browser_download_timeout", 600)
         try:
             self._url = self._get_download_url(self._url)
         except ModDBDownloadError as e:
             if 'challenge page' not in str(e) and 'Download link not found' not in str(e):
                 raise
-            return self._download_with_browser(to, browser_download_timeout)
+            return self._download_with_browser(to)
 
         return super().download(to, use_cached)

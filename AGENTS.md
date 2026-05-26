@@ -26,7 +26,7 @@ podman run -it --rm -p 127.0.0.1:6080:6080 -v ./:/app:Z gamma-launcher --help
 Run tests only inside the container, not directly on the host:
 
 ```sh
-podman run --rm --entrypoint python -v ./:/app:Z gamma-launcher -m unittest discover -v tests/
+podman run --rm -v ./:/app:Z --entrypoint="" gamma-launcher uv run pytest
 ```
 
 The container includes runtime dependencies such as `libunrar` and Firefox
@@ -42,10 +42,12 @@ refactors when fixing a narrow issue.
 
 ## Testing Guidelines
 
-Tests use `unittest`. Name test modules `tests/test_*.py` and keep fixtures in
-`tests/data/`. Add focused tests for downloader, installer, and command behavior
-when changing those areas. Agents must always run tests through the container so
-results match the supported runtime.
+Tests are run exclusively with `pytest`. Name test modules `tests/test_*.py` and
+keep fixtures in `tests/data/`. Existing `unittest.TestCase` tests are still
+collected by pytest, but new tests should prefer plain pytest style. Add focused
+tests for downloader, installer, and command behavior when changing those areas.
+Agents must always run tests through the container so results match the
+supported runtime.
 
 ## Commit & Pull Request Guidelines
 

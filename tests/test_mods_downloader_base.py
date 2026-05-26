@@ -1,6 +1,6 @@
 from hashlib import md5
 from requests.exceptions import ConnectionError, HTTPError
-from unittest import TestCase, skip
+from unittest import TestCase
 from unittest.mock import patch
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -9,7 +9,7 @@ from shutil import copy
 from launcher.exceptions import HashError
 from launcher.mods.downloader.base import DefaultDownloader, _print_retry_message
 
-from common import basic_url, data_dir, git_archive_url, mocked_get
+from tests.common import basic_url, data_dir, git_archive_url, mocked_get
 
 
 def mocked_retry(*args, **kwargs):
@@ -152,12 +152,12 @@ class DefaultDownloaderTestCase(TestCase):
 
         mock_request.assert_called_once_with('http://blablabla/foobar.zip', stream=True)
 
-    @skip('Take a minute')
     @patch('launcher.mods.downloader.g_session.get', side_effect=mocked_retry)
     def test_retry_and_fail(self, mock_request):
         o = DefaultDownloader(basic_url)
 
-        with self.assertRaises(ConnectionError), TemporaryDirectory(
+        with patch.object(DefaultDownloader.download.retry, 'sleep'), \
+                self.assertRaises(ConnectionError), TemporaryDirectory(
             prefix='gamma-launcher-base-downloader-test-'
         ) as dir:
             o.download(Path(dir))

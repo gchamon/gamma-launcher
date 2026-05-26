@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 from launcher.mods.downloader.moddb import ModDBDownloader
 
-from common import basic_url2, mocked_get, moddb_start_url, moddb_page_info, moddb_mirror_url
+from tests.common import basic_url2, mocked_get, moddb_start_url, moddb_page_info, moddb_mirror_url
 
 
 class ModDBDownloaderTestCase(TestCase):
@@ -212,7 +212,7 @@ class ModDBDownloaderTestCase(TestCase):
 
             self.assertEqual(
                 ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=4,
+                    profile, dl_dir, since_us=0,
                     expected_name='expected.zip',
                 ),
                 dl_dir / 'expected.zip'
@@ -239,27 +239,6 @@ class ModDBDownloaderTestCase(TestCase):
             self.assertNotIn('Ignoring browser download', stdout.getvalue())
 
     @patch('launcher.mods.downloader.moddb.sleep')
-    def test_wait_for_download_reports_rejected_download_on_timeout(self, mock_sleep) -> None:
-        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
-            pdir = Path(dir)
-            profile = pdir / 'profile'
-            dl_dir = pdir / 'downloads'
-            profile.mkdir()
-            dl_dir.mkdir()
-            archive = dl_dir / 'expected.zip'
-            archive.write_text('<html><title>Opps - ModDB</title>')
-
-            with self.assertRaises(Exception) as cm:
-                ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=2,
-                    expected_name='expected.zip',
-                )
-
-            self.assertIn('Timed out waiting for download', str(cm.exception))
-            self.assertIn('expected.zip: download is an HTML page, not an archive', str(cm.exception))
-            self.assertEqual(str(cm.exception).count('expected.zip:'), 1)
-
-    @patch('launcher.mods.downloader.moddb.sleep')
     @patch('sys.stdout', new_callable=StringIO)
     def test_wait_for_download_prints_simple_wait_message(self, stdout, mock_sleep) -> None:
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
@@ -269,17 +248,24 @@ class ModDBDownloaderTestCase(TestCase):
             profile.mkdir()
             dl_dir.mkdir()
 
-            with self.assertRaises(Exception):
-                ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=1,
-                    expected_name='expected.zip',
-                )
+            def create_archive(_seconds):
+                archive = dl_dir / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
 
-            self.assertIn('Waiting for download to start...', stdout.getvalue())
+            mock_sleep.side_effect = create_archive
+
+            ModDBDownloader._wait_for_download(
+                profile, dl_dir, since_us=0,
+                expected_name='expected.zip',
+            )
+
+            self.assertEqual(stdout.getvalue().count('Waiting for download to start...'), 1)
             self.assertNotIn('places.sqlite:', stdout.getvalue())
 
+    @patch('launcher.mods.downloader.moddb.sleep')
     @patch('sys.stdout', new_callable=StringIO)
-    def test_wait_for_download_prints_captcha_prompt_immediately(self, stdout) -> None:
+    def test_wait_for_download_prints_captcha_prompt_once(self, stdout, mock_sleep) -> None:
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
             pdir = Path(dir)
             profile = pdir / 'profile'
@@ -287,13 +273,19 @@ class ModDBDownloaderTestCase(TestCase):
             profile.mkdir()
             dl_dir.mkdir()
 
-            with self.assertRaises(Exception):
-                ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=1,
-                    expected_name='expected.zip',
-                )
+            def create_archive(_seconds):
+                archive = dl_dir / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
 
-            self.assertIn('click to solve captcha:', stdout.getvalue())
+            mock_sleep.side_effect = create_archive
+
+            ModDBDownloader._wait_for_download(
+                profile, dl_dir, since_us=0,
+                expected_name='expected.zip',
+            )
+
+            self.assertEqual(stdout.getvalue().count('click to solve captcha:'), 1)
 
     @patch('sys.stdout', new_callable=StringIO)
     def test_wait_for_download_does_not_prompt_when_archive_exists(self, stdout) -> None:
@@ -308,7 +300,7 @@ class ModDBDownloaderTestCase(TestCase):
 
             self.assertEqual(
                 ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=2,
+                    profile, dl_dir, since_us=0,
                     expected_name='expected.zip',
                 ),
                 archive
@@ -334,7 +326,7 @@ class ModDBDownloaderTestCase(TestCase):
 
             self.assertEqual(
                 ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=4,
+                    profile, dl_dir, since_us=0,
                     expected_name='expected.zip', prompt_after=20,
                 ),
                 dl_dir / 'expected.zip'
@@ -351,11 +343,19 @@ class ModDBDownloaderTestCase(TestCase):
             profile.mkdir()
             dl_dir.mkdir()
 
-            with self.assertRaises(Exception):
-                ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=22,
-                    expected_name='expected.zip', prompt_after=20,
-                )
+            def create_archive(_seconds):
+                if mock_sleep.call_count < 21:
+                    return
+                archive = dl_dir / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
+
+            mock_sleep.side_effect = create_archive
+
+            ModDBDownloader._wait_for_download(
+                profile, dl_dir, since_us=0,
+                expected_name='expected.zip', prompt_after=20,
+            )
 
             self.assertEqual(stdout.getvalue().count('click to solve captcha:'), 1)
 
@@ -373,14 +373,63 @@ class ModDBDownloaderTestCase(TestCase):
             profile.mkdir()
             dl_dir.mkdir()
 
-            with self.assertRaises(Exception):
-                ModDBDownloader._wait_for_download(
-                    profile, dl_dir, since_us=0, timeout=22,
-                    expected_name='expected.zip', prompt_after=20,
-                )
+            def create_archive(_seconds):
+                archive = dl_dir / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
+
+            mock_sleep.side_effect = create_archive
+
+            ModDBDownloader._wait_for_download(
+                profile, dl_dir, since_us=0,
+                expected_name='expected.zip', prompt_after=20,
+            )
 
             self.assertIn('Download detected in Firefox history', stdout.getvalue())
             self.assertNotIn('click to solve captcha:', stdout.getvalue())
+
+    @patch('launcher.mods.downloader.moddb.ModDBDownloader._start_browser_services')
+    @patch('launcher.mods.downloader.moddb.Popen')
+    @patch('launcher.mods.downloader.moddb.sleep')
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_download_with_browser_reopens_firefox_when_closed(
+        self, stdout, mock_sleep, mock_popen, _
+    ) -> None:
+        class MockedProcess:
+            def __init__(self, closed: bool = False) -> None:
+                self.closed = closed
+
+            def poll(self):
+                return 1 if self.closed else None
+
+            def terminate(self):
+                pass
+
+            def wait(self, *args, **kwargs):
+                pass
+
+            def kill(self):
+                pass
+
+        mock_popen.side_effect = [MockedProcess(closed=True), MockedProcess()]
+        o = ModDBDownloader(moddb_start_url, '')
+        o._user_wanted_name = 'expected.zip'
+
+        with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
+            pdir = Path(dir)
+
+            def create_archive(_seconds):
+                archive = pdir / 'moddb' / '277404' / 'expected.zip'
+                if not archive.exists():
+                    self._write_zip(archive)
+
+            mock_sleep.side_effect = create_archive
+
+            self.assertEqual(o._download_with_browser(pdir), pdir / 'moddb' / '277404' / 'expected.zip')
+
+        self.assertEqual(mock_popen.call_count, 2)
+        self.assertEqual(mock_popen.call_args_list[0].args, mock_popen.call_args_list[1].args)
+        self.assertIn('Firefox closed before download completed; reopening...', stdout.getvalue())
 
     @patch('launcher.mods.downloader.moddb.ModDBDownloader._download_with_browser')
     @patch('launcher.mods.downloader.moddb.g_session.get')
@@ -395,8 +444,8 @@ class ModDBDownloaderTestCase(TestCase):
         o = ModDBDownloader(moddb_start_url, '')
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
             self.assertEqual(
-                o.download(Path(dir), browser_download_timeout=123),
+                o.download(Path(dir)),
                 Path('/tmp/manual.7z')
             )
 
-        mock_browser.assert_called_once_with(Path(dir), 123)
+        mock_browser.assert_called_once_with(Path(dir))

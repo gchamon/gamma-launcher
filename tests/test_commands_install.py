@@ -4,7 +4,6 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from launcher.commands.install import FullInstall
-from launcher.commands.install import AnomalyInstall
 from launcher.mods.info import ModInfo
 
 
@@ -31,12 +30,6 @@ class MockedMod:
 
 class FullInstallTestCase(TestCase):
 
-    def test_browser_download_timeout_argument_defaults_to_ten_minutes(self) -> None:
-        arg = AnomalyInstall.arguments["--browser-download-timeout"]
-
-        self.assertEqual(arg["default"], 600)
-        self.assertEqual(FullInstall.arguments["--browser-download-timeout"]["default"], 600)
-
     @patch('launcher.commands.install.read_mod_maker')
     def test_install_mods_collects_failures_and_continues(self, read_mod_maker) -> None:
         first = MockedMod('001 - first')
@@ -51,7 +44,6 @@ class FullInstallTestCase(TestCase):
             installer._grok_mod_dir = pdir
             installer._dl_dir = pdir / 'downloads'
             installer._mod_dir = pdir / 'mods'
-            installer._browser_download_timeout = 123
             installer._force_reinstall = True
 
             with self.assertRaises(RuntimeError) as cm:
@@ -65,8 +57,8 @@ class FullInstallTestCase(TestCase):
         self.assertFalse(third.installed)
         self.assertTrue(fourth.downloaded)
         self.assertTrue(fourth.installed)
-        self.assertEqual(first.download_kwargs['browser_download_timeout'], 123)
-        self.assertEqual(fourth.download_kwargs['browser_download_timeout'], 123)
+        self.assertNotIn('browser_download_timeout', first.download_kwargs)
+        self.assertNotIn('browser_download_timeout', fourth.download_kwargs)
         self.assertTrue(first.install_kwargs['force'])
         self.assertTrue(fourth.install_kwargs['force'])
         self.assertIn('Failed to install 2 mod(s)', str(cm.exception))

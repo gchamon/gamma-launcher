@@ -4,7 +4,7 @@ from typing import Dict
 
 from launcher.hash import check_hash
 
-from common import data_dir
+from tests.common import data_dir
 
 
 class CheckHashTestCase(TestCase):

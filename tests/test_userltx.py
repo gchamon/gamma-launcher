@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from shutil import copy
 
-from common import data_dir
+from tests.common import data_dir
 from launcher.userltx import UserLTX
 
 

@@ -3,7 +3,7 @@ from typing import Optional, List, Tuple
 
 from launcher.mods import read_mod_maker, ModSeparator, ModDBInstaller, ModDefault
 
-from common import data_dir
+from tests.common import data_dir
 
 
 class ReadModMakerTestCase(TestCase):
