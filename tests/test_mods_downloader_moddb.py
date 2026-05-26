@@ -354,6 +354,9 @@ class ModDBDownloaderTestCase(TestCase):
 
         o = ModDBDownloader(moddb_start_url, '')
         with TemporaryDirectory(prefix='gamma-launcher-moddb-downloader-test-') as dir:
-            self.assertEqual(o.download(Path(dir)), Path('/tmp/manual.7z'))
+            self.assertEqual(
+                o.download(Path(dir), browser_download_timeout=123),
+                Path('/tmp/manual.7z')
+            )
 
-        mock_browser.assert_called_once()
+        mock_browser.assert_called_once_with(Path(dir), 123)

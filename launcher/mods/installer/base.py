@@ -17,14 +17,14 @@ class BaseInstaller:
 
         self._dl.check(dl_dir, update_cache)
 
-    def download(self, to: Path, use_cached: bool = False) -> Path:
+    def download(self, to: Path, use_cached: bool = False, **kwargs) -> Path:
         if not self._dl:
             raise RuntimeError(
                 f'{self.info.name} does not support download() method'
                 'since no URL was provided'
             )
 
-        return self._dl.download(to, use_cached)
+        return self._dl.download(to, use_cached, **kwargs)
 
     def extract(self, to: Path) -> None:
         if not self._dl:

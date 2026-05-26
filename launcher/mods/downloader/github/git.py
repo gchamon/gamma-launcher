@@ -3,10 +3,10 @@ from os import getenv, environ
 from pathlib import Path
 from shutil import copytree
 from tempfile import TemporaryDirectory
-from tqdm import tqdm
 from typing import Optional
 
 from launcher.bootstrap import is_in_pyinstaller_context
+from launcher.progress import progress_bar
 from launcher.mods.info import ModInfo
 from launcher.mods.downloader.base import DefaultDownloader
 
@@ -22,7 +22,7 @@ class ProgressPrinter(RemoteProgress):
     """
     def __init__(self, name: str, user: str):
         super().__init__()
-        self._pbar = tqdm(
+        self._pbar = progress_bar(
             desc=f"  - Fetching remote {user} from {name}",
             unit="object", unit_scale=True
         )
@@ -52,7 +52,7 @@ class GithubDownloader(DefaultDownloader):
     def check(self, to: Path, update_cache: bool = False) -> None:
         pass
 
-    def download(self, to: Path, use_cached: bool = False, filename: str = None) -> Path:
+    def download(self, to: Path, use_cached: bool = False, filename: str = None, **kwargs) -> Path:
         if is_in_pyinstaller_context() and getenv('LD_LIBRARY_PATH'):
             del environ['LD_LIBRARY_PATH']
 

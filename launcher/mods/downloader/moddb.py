@@ -440,7 +440,7 @@ class ModDBDownloader(DefaultDownloader):
             message += "\n".join(f"- {reason}" for reason in rejected.values())
         raise ModDBDownloadError(message)
 
-    def _download_with_browser(self, to: Path) -> Path:
+    def _download_with_browser(self, to: Path, timeout: int = 600) -> Path:
         global _browser_download_succeeded
 
         cached = self._get_cached_browser_archive(to)
@@ -467,6 +467,7 @@ class ModDBDownloader(DefaultDownloader):
                 expected_name=self._user_wanted_name,
                 expected_hash=self._archivehash,
                 prompt_after=20 if _browser_download_succeeded else 0,
+                timeout=timeout,
             )
         finally:
             proc.terminate()
@@ -515,11 +516,12 @@ class ModDBDownloader(DefaultDownloader):
 
     def download(self, to: Path, use_cached: bool = False, *args, **kwargs) -> Path:
         self._set_vars_from_metadata()
+        browser_download_timeout = kwargs.pop("browser_download_timeout", 600)
         try:
             self._url = self._get_download_url(self._url)
         except ModDBDownloadError as e:
             if 'challenge page' not in str(e) and 'Download link not found' not in str(e):
                 raise
-            return self._download_with_browser(to)
+            return self._download_with_browser(to, browser_download_timeout)
 
         return super().download(to, use_cached)
