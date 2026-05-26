@@ -4,6 +4,9 @@ The supported and recommended way to run gamma-launcher is the container workflo
 [README.md](README.md). These alternate methods are kept for users who explicitly
 want to manage native dependencies themselves.
 
+For native installs, Firefox must be installed on the system. The launcher uses
+it when ModDB requires a browser challenge before downloads can continue.
+
 ## Using pip from source
 
 It is strongly advised to install this in a
@@ -64,7 +67,7 @@ maintainer sites, so prefer the container workflow when reproducibility and
 supply-chain control matter.
 
 Make sure you have a toolchain available to compile `7z` and `libunrar.so`, and
-that `python3-venv` is installed:
+that `python3-venv` and Firefox are installed:
 
 ```sh
 cd easy-install
