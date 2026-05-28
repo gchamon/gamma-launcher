@@ -2,14 +2,23 @@ from pathlib import Path
 from io import StringIO
 import json
 import sqlite3
+from requests.exceptions import ConnectionError
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 from zipfile import ZipFile
 
-from launcher.mods.downloader.moddb import ModDBDownloader
+from launcher.mods.downloader.moddb import ModDBDownloader, _moddb_get
 
-from tests.common import basic_url2, mocked_get, moddb_start_url, moddb_page_info, moddb_mirror_url
+from tests.common import (
+    MockedResponse,
+    basic_url2,
+    data_dir,
+    mocked_get,
+    moddb_start_url,
+    moddb_page_info,
+    moddb_mirror_url,
+)
 
 
 class ModDBDownloaderTestCase(TestCase):
@@ -26,6 +35,53 @@ class ModDBDownloaderTestCase(TestCase):
         self.assertEqual(len(mock_request.call_args_list), 2)
         self.assertTrue(mock_request.call_args_list[0].called_with(moddb_start_url))
         self.assertTrue(mock_request.call_args_list[1].called_with(moddb_mirror_url))
+
+    @patch.object(_moddb_get.retry, 'sleep')
+    @patch('launcher.mods.downloader.moddb.g_session.get')
+    def test_parse_moddb_metadata_retries_connection_error(self, mock_request, _) -> None:
+        mock_request.side_effect = [
+            ConnectionError('connection refused'),
+            MockedResponse(200, data_dir / 'moddb-stalker-anomaly-page-minimal.htm'),
+        ]
+
+        o = ModDBDownloader._parse_moddb_metadata(moddb_page_info)
+
+        self.assertEqual(o['Filename'], 'Anomaly-1.5.3-Full.2.7z')
+        self.assertEqual(len(mock_request.call_args_list), 2)
+
+    @patch.object(_moddb_get.retry, 'sleep')
+    @patch('launcher.mods.downloader.moddb.g_session.get')
+    def test_get_download_url_retries_start_page_connection_error(self, mock_request, _) -> None:
+        mock_request.side_effect = [
+            ConnectionError('connection refused'),
+            MockedResponse(200, data_dir / 'moddb-dl-start.htm'),
+            MockedResponse(302, None, headers={'location': basic_url2}),
+        ]
+
+        self.assertEqual(ModDBDownloader._get_download_url(moddb_start_url), basic_url2)
+        self.assertEqual(len(mock_request.call_args_list), 3)
+
+    @patch.object(_moddb_get.retry, 'sleep')
+    @patch('launcher.mods.downloader.moddb.g_session.get')
+    def test_get_download_url_retries_mirror_connection_error(self, mock_request, _) -> None:
+        mock_request.side_effect = [
+            MockedResponse(200, data_dir / 'moddb-dl-start.htm'),
+            ConnectionError('connection refused'),
+            MockedResponse(302, None, headers={'location': basic_url2}),
+        ]
+
+        self.assertEqual(ModDBDownloader._get_download_url(moddb_start_url), basic_url2)
+        self.assertEqual(len(mock_request.call_args_list), 3)
+
+    @patch.object(_moddb_get.retry, 'sleep')
+    @patch('launcher.mods.downloader.moddb.g_session.get')
+    def test_moddb_get_retries_connection_error_five_times_then_reraises(self, mock_request, _) -> None:
+        mock_request.side_effect = ConnectionError('connection refused')
+
+        with self.assertRaises(ConnectionError):
+            ModDBDownloader._parse_moddb_metadata(moddb_page_info)
+
+        self.assertEqual(len(mock_request.call_args_list), 5)
 
     def test_is_challenge_response(self) -> None:
         self.assertTrue(ModDBDownloader._is_challenge_response(

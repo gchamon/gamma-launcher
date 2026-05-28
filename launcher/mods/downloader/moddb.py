@@ -8,15 +8,16 @@ import zipfile
 from bs4 import BeautifulSoup
 from os import environ
 from pathlib import Path
-from requests.exceptions import HTTPError
+from requests.exceptions import ConnectionError, HTTPError
 from subprocess import DEVNULL, Popen
 from time import sleep
 from typing import Dict
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from urllib.parse import urlparse, unquote
 
 from launcher.exceptions import HashError, ModDBDownloadError
 from launcher.hash import check_hash
-from launcher.mods.downloader.base import DefaultDownloader, g_session
+from launcher.mods.downloader.base import DefaultDownloader, _print_retry_message, g_session
 
 
 _browser_processes = []
@@ -24,6 +25,17 @@ _browser_services_started = False
 _browser_download_succeeded = False
 _browser_prompt_url = 'http://localhost:6080/vnc.html?autoconnect=1'
 _browser_download_temp_suffixes = ('.part', '.crdownload')
+
+
+@retry(
+    before_sleep=_print_retry_message,
+    reraise=True,
+    retry=retry_if_exception_type(ConnectionError),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=1, max=30)
+)
+def _moddb_get(*args, **kwargs):
+    return g_session.get(*args, **kwargs)
 
 
 class ModDBDownloader(DefaultDownloader):
@@ -49,7 +61,7 @@ class ModDBDownloader(DefaultDownloader):
 
     @staticmethod
     def _parse_moddb_metadata(url: str) -> Dict[str, str]:
-        r = g_session.get(url)
+        r = _moddb_get(url)
 
         if r.status_code != 200:
             r.raise_for_status()
@@ -78,7 +90,7 @@ class ModDBDownloader(DefaultDownloader):
     @staticmethod
     def _get_download_url(url: str) -> str:
         id = url.split('/')[-1]
-        r = g_session.get(url)
+        r = _moddb_get(url)
         if ModDBDownloader._is_challenge_response(r.text, r.status_code):
             raise ModDBDownloadError(f"ModDB challenge page returned when requesting {url}")
 
@@ -86,7 +98,7 @@ class ModDBDownloader(DefaultDownloader):
         if not s:
             raise ModDBDownloadError(f"Download link not found when requesting {url}")
 
-        return g_session.get(f"https://www.moddb.com{s[0]}", allow_redirects=False).headers["location"]
+        return _moddb_get(f"https://www.moddb.com{s[0]}", allow_redirects=False).headers["location"]
 
     @staticmethod
     def _start_browser_services() -> None:

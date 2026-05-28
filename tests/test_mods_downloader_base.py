@@ -162,4 +162,4 @@ class DefaultDownloaderTestCase(TestCase):
         ) as dir:
             o.download(Path(dir))
 
-        self.assertEqual(len(mock_request.call_args_list), 3)
+        self.assertEqual(len(mock_request.call_args_list), 5)

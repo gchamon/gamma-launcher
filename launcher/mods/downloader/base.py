@@ -108,7 +108,7 @@ class DefaultDownloader:
         before_sleep=_print_retry_message,
         reraise=True,
         retry=retry_if_exception_type(ConnectionError),
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=1, min=1, max=30)
     )
     def download(self, to: Path, use_cached=False, hash: str = None, **kwargs) -> Path:
